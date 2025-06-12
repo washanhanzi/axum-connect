@@ -14,10 +14,6 @@ use serde::de::DeserializeOwned;
 
 use crate::error::{RpcError, RpcErrorCode, RpcIntoError};
 
-#[rustversion::attr(
-    since(1.75),
-    diagnostic::on_unimplemented(note = "Use v0.5.1 with async_trait",)
-)]
 pub trait RpcFromRequestParts<T, S>: Sized
 where
     T: Message,
@@ -106,5 +102,95 @@ where
     ) -> Result<Self, Self::Rejection> {
         let inner_state = InnerState::from_ref(state);
         Ok(Self(inner_state))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        extract::Request,
+        http::{HeaderName, HeaderValue, Method},
+    };
+
+    // Use pbjson_types Empty message as a simple test message
+    use pbjson_types::Empty as TestMessage;
+
+    // Custom extractor for user ID from x-user-id header
+    #[derive(Debug)]
+    struct ExtractUserId(String);
+
+    impl<M, S> RpcFromRequestParts<M, S> for ExtractUserId
+    where
+        M: Message,
+        S: Send + Sync,
+    {
+        type Rejection = RpcError;
+
+        async fn rpc_from_request_parts(
+            parts: &mut http::request::Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            let user_id = parts
+                .headers
+                .get("x-user-id")
+                .and_then(|value| value.to_str().ok())
+                .map(|s| s.to_string())
+                .ok_or_else(|| {
+                    (RpcErrorCode::InvalidArgument, "Missing x-user-id header").rpc_into_error()
+                })?;
+
+            Ok(ExtractUserId(user_id))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_extract_user_id() {
+        // Test successful extraction
+        let mut parts = Request::builder()
+            .method(Method::POST)
+            .uri("/test")
+            .header(
+                HeaderName::from_static("x-user-id"),
+                HeaderValue::from_static("user123"),
+            )
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+
+        let state = ();
+        let result =
+            <ExtractUserId as RpcFromRequestParts<TestMessage, ()>>::rpc_from_request_parts(
+                &mut parts, &state,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        if let Ok(ExtractUserId(user_id)) = result {
+            assert_eq!(user_id, "user123");
+        }
+
+        // Test missing header
+        let mut parts_no_header = Request::builder()
+            .method(Method::POST)
+            .uri("/test")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+
+        let result_no_header =
+            <ExtractUserId as RpcFromRequestParts<TestMessage, ()>>::rpc_from_request_parts(
+                &mut parts_no_header,
+                &state,
+            )
+            .await;
+
+        assert!(result_no_header.is_err());
+        if let Err(err) = result_no_header {
+            assert!(matches!(err.code, RpcErrorCode::InvalidArgument));
+            assert_eq!(err.message, "Missing x-user-id header");
+        }
     }
 }
