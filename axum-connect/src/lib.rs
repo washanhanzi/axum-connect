@@ -3,6 +3,7 @@ pub mod handler;
 pub mod parts;
 pub mod response;
 pub mod router;
+pub mod routes;
 
 // Re-export several crates
 pub use futures;
@@ -16,4 +17,5 @@ pub mod prelude {
     pub use crate::parts::*;
     pub use crate::response::*;
     pub use crate::router::RpcRouterExt;
+    pub use crate::routes::Routes;
 }

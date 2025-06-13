@@ -98,7 +98,7 @@ With the boring stuff out of the way, let's implement our service using Axum!
 ```rust
 use async_stream::stream;
 use axum::{extract::Host, Router};
-use axum_connect::{futures::Stream, prelude::*};
+use axum_connect::{futures::Stream, prelude::*, Routes};
 use error::Error;
 use proto::hello::*;
 use tower_http::cors::CorsLayer;
@@ -120,16 +120,16 @@ mod proto {
 
 #[tokio::main]
 async fn main() {
-    // Build our application with a route. Note the `rpc` method which was added by `axum-connect`.
-    // It expect a service method handler, wrapped in it's respective type. The handler (below) is
-    // just a normal Rust function. Just like Axum, it also supports extractors!
-    let app = Router::new()
+    // Build our application with a route. Using [`Routes`] mirrors Tonic's API
+    // and produces a [`Router`] you can combine with the rest of your Axum app.
+    let app = Routes::new()
         // A standard unary (POST based) Connect-Web request handler.
-        .rpc(HelloWorldService::say_hello(say_hello_unary))
+        .add_service(HelloWorldService::say_hello(say_hello_unary))
         // A GET version of the same thing, which has well-defined semantics for caching.
-        .rpc(HelloWorldService::say_hello_unary_get(say_hello_unary))
+        .add_service(HelloWorldService::say_hello_unary_get(say_hello_unary))
         // A server-streaming request handler. Very useful when you need them!
-        .rpc(HelloWorldService::say_hello_stream(stream_three_reponses));
+        .add_service(HelloWorldService::say_hello_stream(stream_three_reponses))
+        .into_router();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3030")
         .await
