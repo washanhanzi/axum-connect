@@ -2,17 +2,18 @@
 name = "axum-connect-example"
 version = "0.3.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-anyhow = "1.0.95"
-async-stream = "0.3.6"
-axum = "0.8"
-axum-connect = { path = "../axum-connect", features = ["axum-extra"] }
-axum-extra = "0.10.0"
-prost = "0.13"
-thiserror = "2.0.11"
+axum = "0.8.0"
+axum-connect = { path = "../axum-connect" }
+prost = "0.13.1"
 tokio = { version = "1.43.0", features = ["full"] }
-tower-http = { version = "0.6.2", features = ["cors"] }
+tower-http = { version = "0.5.2", features = ["cors"] }
+futures = "0.3.31"
+connect-core = { git = "https://github.com/connectrpc/connect-rust.git", rev = "b8e5159", features = ["axum"] }
+async-stream = "0.3.5"
 
 [build-dependencies]
 axum-connect-build = { path = "../axum-connect-build" }
+prost-build = "0.13.1"

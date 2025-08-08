@@ -1,7 +1,15 @@
-use axum_connect_build::{axum_connect_codegen, AxumConnectGenSettings};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = prost_build::Config::new();
 
-fn main() {
-    let settings = AxumConnectGenSettings::from_directory_recursive("proto")
-        .expect("failed to glob proto files");
-    axum_connect_codegen(settings).unwrap();
+    // Add serde support for JSON serialization
+    config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
+    config.type_attribute(".", "#[serde(rename_all = \"camelCase\")]");
+
+    axum_connect_build::compile(
+        &["proto/hello.proto"],
+        &["proto/"],
+        config
+    ).unwrap();
+
+    Ok(())
 }

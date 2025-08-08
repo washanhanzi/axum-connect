@@ -1,126 +1,79 @@
-use axum::http::StatusCode;
-use prost::Message;
+// Already has documentation
+//! Error and response types for Connect.
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use connect_core::{Code, Error as ConnectCoreError};
 use serde::Serialize;
 
-use crate::{prelude::RpcResult, response::RpcIntoResponse};
-
-#[derive(Clone, Serialize)]
-pub struct RpcError {
-    pub code: RpcErrorCode,
-    pub message: String,
-    pub details: Vec<RpcErrorDetail>,
+#[derive(Clone, Serialize, Debug)]
+pub struct ConnectError {
+    code: Code,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    details: Vec<ErrorDetail>,
 }
 
-pub trait RpcIntoError {
-    fn rpc_into_error(self) -> RpcError;
-}
-
-impl RpcIntoError for RpcError {
-    fn rpc_into_error(self) -> RpcError {
-        self
-    }
-}
-
-impl RpcError {
-    pub fn new(code: RpcErrorCode, message: String) -> Self {
+impl ConnectError {
+    pub fn new<S: Into<String>>(code: Code, message: S) -> Self {
         Self {
             code,
-            message,
+            message: Some(message.into()),
+            details: vec![],
+        }
+    }
+
+    pub fn new_unimplemented() -> Self {
+        Self {
+            code: Code::Unimplemented,
+            message: Some("The requested service has not been implemented.".to_string()),
             details: vec![],
         }
     }
 }
 
-impl<C, M> RpcIntoError for (C, M)
-where
-    C: Into<RpcErrorCode>,
-    M: Into<String>,
-{
-    fn rpc_into_error(self) -> RpcError {
-        RpcError {
-            code: self.0.into(),
-            message: self.1.into(),
-            details: vec![],
+impl IntoResponse for ConnectError {
+    fn into_response(self) -> Response {
+        let status_code = match self.code {
+            Code::Canceled => StatusCode::REQUEST_TIMEOUT,
+            Code::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
+            Code::InvalidArgument => StatusCode::BAD_REQUEST,
+            Code::DeadlineExceeded => StatusCode::REQUEST_TIMEOUT,
+            Code::NotFound => StatusCode::NOT_FOUND,
+            Code::AlreadyExists => StatusCode::CONFLICT,
+            Code::PermissionDenied => StatusCode::FORBIDDEN,
+            Code::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+            Code::FailedPrecondition => StatusCode::BAD_REQUEST, // Connect spec says this should be 400
+            Code::Aborted => StatusCode::CONFLICT,
+            Code::OutOfRange => StatusCode::BAD_REQUEST,
+            Code::Unimplemented => StatusCode::NOT_IMPLEMENTED,
+            Code::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Code::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Code::DataLoss => StatusCode::INTERNAL_SERVER_ERROR,
+            Code::Unauthenticated => StatusCode::UNAUTHORIZED,
+        };
+        (status_code, Json(self)).into_response()
+    }
+}
+
+impl From<ConnectCoreError> for ConnectError {
+    fn from(err: ConnectCoreError) -> Self {
+        Self {
+            code: err.code,
+            message: Some(err.message.to_string()),
+            details: vec![], // TODO: map details
         }
     }
 }
 
-#[derive(Clone, Serialize)]
-pub struct RpcErrorDetail {
+#[derive(Clone, Serialize, Debug)]
+pub struct ErrorDetail {
     #[serde(rename = "type")]
-    pub proto_type: String,
-    #[serde(rename = "value")]
-    pub proto_b62_value: String,
+    pub r#type: String,
+    pub value: String, // Base64 encoded
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug: Option<serde_json::Value>,
 }
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RpcErrorCode {
-    Canceled,
-    Unknown,
-    InvalidArgument,
-    DeadlineExceeded,
-    NotFound,
-    AlreadyExists,
-    PermissionDenied,
-    ResourceExhausted,
-    FailedPrecondition,
-    Aborted,
-    OutOfRange,
-    Unimplemented,
-    Internal,
-    Unavailable,
-    DataLoss,
-    Unauthenticated,
-}
-
-impl From<RpcErrorCode> for StatusCode {
-    fn from(val: RpcErrorCode) -> Self {
-        match val {
-            // Spec: https://connect.build/docs/protocol/#error-codes
-            RpcErrorCode::Canceled => StatusCode::REQUEST_TIMEOUT,
-            RpcErrorCode::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
-            RpcErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
-            RpcErrorCode::DeadlineExceeded => StatusCode::REQUEST_TIMEOUT,
-            RpcErrorCode::NotFound => StatusCode::NOT_FOUND,
-            RpcErrorCode::AlreadyExists => StatusCode::CONFLICT,
-            RpcErrorCode::PermissionDenied => StatusCode::FORBIDDEN,
-            RpcErrorCode::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
-            RpcErrorCode::FailedPrecondition => StatusCode::PRECONDITION_FAILED,
-            RpcErrorCode::Aborted => StatusCode::CONFLICT,
-            RpcErrorCode::OutOfRange => StatusCode::BAD_REQUEST,
-            RpcErrorCode::Unimplemented => StatusCode::NOT_FOUND,
-            RpcErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            RpcErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-            RpcErrorCode::DataLoss => StatusCode::INTERNAL_SERVER_ERROR,
-            RpcErrorCode::Unauthenticated => StatusCode::UNAUTHORIZED,
-        }
-    }
-}
-
-impl<T> RpcIntoResponse<T> for RpcErrorCode
-where
-    T: Message,
-{
-    fn rpc_into_response(self) -> RpcResult<T> {
-        Err(RpcError::new(self, "".to_string()))
-    }
-}
-
-impl<T> RpcIntoResponse<T> for RpcError
-where
-    T: Message,
-{
-    fn rpc_into_response(self) -> RpcResult<T> {
-        Err(self)
-    }
-}
-
-// TODO: This needs to be done in the handler to support streaming errors.
-// impl IntoResponse for RpcError {
-//     fn into_response(self) -> Response {
-//         let status_code = StatusCode::from(self.code.clone());
-//         let json = serde_json::to_string(&self).expect("serialize error type");
-//         (status_code, json).into_response()
-//     }
-// }

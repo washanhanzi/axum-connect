@@ -1,31 +1,45 @@
+//! Response types for Connect.
+use crate::error::ConnectError;
+use axum::{
+    body::Body,
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+};
 use prost::Message;
+use serde::Serialize;
 
-use crate::error::{RpcError, RpcIntoError};
+const APPLICATION_PROTO: &str = "application/proto";
+const APPLICATION_JSON: &str = "application/json";
 
-pub type RpcResult<M> = Result<M, RpcError>;
+#[derive(Debug)]
+pub struct ConnectResponse<T>(pub T);
 
-pub trait RpcIntoResponse<T>: Send + Sync + 'static
+impl<T> IntoResponse for ConnectResponse<T>
 where
-    T: Message,
+    T: Message + Serialize + Default,
 {
-    fn rpc_into_response(self) -> RpcResult<T>;
-}
-
-impl<T> RpcIntoResponse<T> for T
-where
-    T: Message + 'static,
-{
-    fn rpc_into_response(self) -> RpcResult<T> {
-        Ok(self)
+    fn into_response(self) -> Response {
+        // This implementation defaults to JSON. A more complete implementation
+        // would check the `Accept` header of the request to decide whether to
+        // serialize as Protobuf or JSON. However, `IntoResponse` does not have
+        // access to the request headers.
+        //
+        // The idiomatic Axum way to solve this is to have a custom response
+        // type that is constructed with the necessary information from the
+        // request, or to use a layer to modify the response based on request
+        // properties. For now, we keep it simple and default to JSON.
+        let body = serde_json::to_vec(&self.0).unwrap();
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(APPLICATION_JSON))
+            .body(Body::from(body))
+            .unwrap()
     }
 }
 
-impl<T, E> RpcIntoResponse<T> for Result<T, E>
-where
-    T: Message + 'static,
-    E: RpcIntoError + Send + Sync + 'static,
-{
-    fn rpc_into_response(self) -> RpcResult<T> {
-        self.map_err(|e| e.rpc_into_error())
+// So that `Result<ConnectResponse<T>, ConnectError>` can be returned from handlers.
+impl<T> From<ConnectResponse<T>> for Result<ConnectResponse<T>, ConnectError> {
+    fn from(res: ConnectResponse<T>) -> Self {
+        Ok(res)
     }
 }
